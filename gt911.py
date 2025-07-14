@@ -14,8 +14,8 @@ except ImportError:
     pass
 
 # GT911 I2C Device Addresses
-_GT911_DEFAULT_I2C_ADDR = 0x5D    # Primary I2C address (INT pin low during reset)
-_GT911_SECONDARY_I2C_ADDR = 0x14  # Secondary I2C address (INT pin high during reset)
+_GT911_DEFAULT_I2C_ADDR = const(0x5D)    # Primary I2C address (INT pin low during reset)
+_GT911_SECONDARY_I2C_ADDR = const(0x14)  # Secondary I2C address (INT pin high during reset)
 
 # GT911 Register Map (16-bit addresses, big-endian transmission)
 _REG_COMMAND = const(0x8040)           # Device command register (read/write)
@@ -49,6 +49,7 @@ class GT911:
     - Hardware reset and I2C address configuration via control pins
     - Automatic configuration management with checksum validation
     - Support for both polling and interrupt-driven touch detection
+    - Debug utilities for configuration analysis and buffer inspection
 
     Hardware Requirements:
     - I2C bus connection (SCL/SDA)
@@ -74,32 +75,6 @@ class GT911:
     :type int_pin: microcontroller.Pin, optional
     :param use_secondary_i2c_address: Configure for 0x14 address (True) or 0x5D (False)
     :type use_secondary_i2c_address: bool, optional
-
-    :raises OSError: If I2C communication fails during initialization
-    :raises ValueError: If invalid resolution or address parameters provided
-
-    Example Usage:
-        >>> import busio
-        >>> import board
-        >>> from gt911 import GT911
-        >>>
-        >>> # Basic setup with I2C only
-        >>> i2c = busio.I2C(board.SCL, board.SDA)
-        >>> touch = GT911(i2c, width=800, height=480)
-        >>>
-        >>> # Setup with hardware control pins
-        >>> touch = GT911(i2c, width=800, height=480,
-        ...               reset_pin=board.GP15, int_pin=board.GP16)
-        >>>
-        >>> # Read device information
-        >>> print(touch.product_id)
-        >>>
-        >>> # Monitor for touch events
-        >>> while True:
-        ...     touches = touch.touches
-        ...     for x, y, size in touches:
-        ...         print(f"Touch at ({x}, {y}) size {size}")
-        ...     time.sleep(0.1)
     """
 
     # pylint: disable=too-many-arguments
@@ -133,7 +108,7 @@ class GT911:
         # Initialize I2C communication with the GT911 device
         self.i2c_device = I2CDevice(i2c, address)
 
-        self._check_config()
+        self._check_config(use_secondary_i2c_address)
 
         # print(f"GT911 initialized with I2C address: {hex(address)}")
 
@@ -157,11 +132,6 @@ class GT911:
 
         :return: Formatted string with device identification details
         :rtype: str
-
-        Example:
-            >>> touch = GT911(i2c)
-            >>> print(touch.product_id)
-            Product ID: 911 Version: 1060 Vendor: 00 Size: 800x480
         """
         # Read 11-byte product information block
         data = self._read(_REG_PRODUCT_ID, 11)
@@ -176,6 +146,22 @@ class GT911:
         config_version_ascii = chr(config_data[0]) if 32 <= config_data[0] <= 126 else f"\\x{config_data[0]:02x}"
 
         return f"Product ID: {product_name} Version: {version:04x} Vendor: {vendor_id:02x} Size: {x_resolution}x{y_resolution} Config: {config_version_ascii}"
+
+
+    @property
+    def configured_resolution(self) -> tuple[int, int]:
+        """Get GT911 device configured resolution.
+
+        Reads the device configuration registers to extract the configured
+        resolution of the touch panel.
+
+        :return: Tuple containing the X and Y resolution
+        :rtype: tuple[int, int]
+        """
+        data = self._read(_REG_PRODUCT_ID, 10)
+        x_resolution = (data[7] << 8) | data[6]  # Device-configured X resolution
+        y_resolution = (data[9] << 8) | data[8]  # Device-configured Y resolution
+        return x_resolution, y_resolution
 
 
     @property
@@ -201,14 +187,6 @@ class GT911:
         :return: List of active touch points as (x, y, size) tuples.
                  Empty list if no touches detected or data not ready.
         :rtype: list[tuple[int, int, int]]
-
-        :raises OSError: If I2C communication with device fails
-
-        Example:
-            >>> touch = GT911(i2c)
-            >>> current_touches = touch.touches
-            >>> for x, y, size in current_touches:
-            ...     print(f"Touch at ({x}, {y}) with size {size}")
         """
         # Initialize touch data storage for up to 5 simultaneous touches
         touch_data = [tuple()] * 5
@@ -237,8 +215,7 @@ class GT911:
         return touch_data[:num_touch_points]
 
 
-
-    def _check_config(self) -> None:
+    def _check_config(self, use_secondary_i2c_address: bool) -> None:
         """Verify and update GT911 device configuration if needed.
 
         Reads the current device configuration to check if the configured resolution
@@ -252,7 +229,8 @@ class GT911:
         4. If different, update resolution bytes in config buffer
         5. Recalculate and update configuration checksum
         6. Write updated configuration back to device
-        7. Signal device to reload configuration
+        7. Re-read configuration to verify write operation
+        8. Signal device to reload configuration
 
         Register layout for resolution:
         - 0x8048: X resolution low byte
@@ -261,12 +239,15 @@ class GT911:
         - 0x804B: Y resolution high byte
         - 0x80FF: Configuration checksum
         - 0x8100: Configuration fresh flag
+        
+        :param use_secondary_i2c_address: I2C address configuration flag (for future extensibility)
+        :type use_secondary_i2c_address: bool
         """
         # Read complete configuration block from device (185 bytes)
         config_buffer = self._read(_REG_CONFIG_START, _REG_CONFIG_SIZE)
+        time.sleep(.5)  # Allow device time to stabilize after config read
 
         # Extract currently configured resolution from config buffer
-        # Resolution bytes are at specific offsets within the config block
         x_low_offset = _REG_X_OUTPUT_MAX_LOW - _REG_CONFIG_START
         x_high_offset = _REG_X_OUTPUT_MAX_HIGH - _REG_CONFIG_START
         y_low_offset = _REG_Y_OUTPUT_MAX_LOW - _REG_CONFIG_START
@@ -274,8 +255,6 @@ class GT911:
 
         current_width = (config_buffer[x_high_offset] << 8) | config_buffer[x_low_offset]
         current_height = (config_buffer[y_high_offset] << 8) | config_buffer[y_low_offset]
-
-        # print(f"GT911 current resolution: {current_width} x {current_height}")
 
         # Update configuration if resolution doesn't match target values
         if current_width != self._width or current_height != self._height:
@@ -287,21 +266,76 @@ class GT911:
             config_buffer[y_low_offset] = self._height & 0xFF          # Y low byte
             config_buffer[y_high_offset] = (self._height >> 8) & 0xFF  # Y high byte
 
-            # Recalculate configuration checksum (sum of all config bytes except checksum)
-            checksum = 0
-            for i in range(_REG_CONFIG_SIZE - 1):  # Exclude checksum byte from calculation
-                checksum += config_buffer[i]
-
-            # GT911 uses two's complement checksum: (~sum + 1) & 0xFF
-            checksum = ((~checksum) + 1) & 0xFF
+            # Recalculate configuration checksum using dedicated helper method
+            checksum = self._checksum(config_buffer)
             config_buffer[_REG_CONFIG_CHKSUM - _REG_CONFIG_START] = checksum
 
             # Write updated configuration to device
             self._write_bytes(_REG_CONFIG_START, config_buffer)
+            
+            # Re-read configuration to verify the write operation was successful
+            config_buffer = self._read(_REG_CONFIG_START, _REG_CONFIG_SIZE)
+            time.sleep(1)  # Allow device time to process configuration update
 
-            # Signal device to reload configuration (requires >10ms delay)
-            time.sleep(0.01)
+            # Signal device to reload configuration from internal memory
             self._write_8(_REG_CONFIG_FRESH, 0x01)
+
+
+    def _checksum(self, config_buffer: bytearray) -> int:
+        """Calculate GT911 configuration checksum using two's complement method.
+              
+        Checksum calculation:
+        1. Sum all bytes in the configuration buffer except the last byte (checksum)
+        2. Apply two's complement: checksum = (~sum + 1) & 0xFF
+        3. This ensures that sum of all config bytes + checksum = 0 (mod 256)
+        
+        :param config_buffer: Configuration data buffer (185 bytes)
+        :type config_buffer: bytearray
+        :return: Calculated checksum byte (0-255)
+        :rtype: int
+        """
+        checksum = 0
+        # Sum all configuration bytes except the checksum byte (last byte)
+        for i in range(_REG_CONFIG_SIZE - 1):
+            checksum += config_buffer[i] & 0xFF  # Ensure byte-wise addition
+        # Two's complement checksum calculation
+        checksum = (~checksum + 1) & 0xFF
+        return checksum
+
+
+    def print_buffer(self, address: int, buffer: bytearray) -> None:
+        """Print buffer contents in hexadecimal format with ASCII representation.
+        
+        Displays buffer data in a formatted hex dump style with 16 bytes per line.
+        This utility method is useful for debugging configuration data, touch
+        coordinates, and other binary data from the GT911 device.
+        
+        Output format per line:
+        - Address: 4-digit hexadecimal starting address for the line
+        - Hex bytes: Up to 16 bytes in hexadecimal format with spaces
+        - ASCII: Printable ASCII characters (32-126), non-printable shown as '.'
+        
+        Example output:
+        0x8047: 65 02 E0 01 05 05 35 01 01 08 28 05 55 32 05 05 |e.....5...(.U2..|
+        
+        :param address: Starting memory address for display purposes
+        :type address: int
+        :param buffer: Data buffer to display
+        :type buffer: bytearray
+        """
+        # Print buffer in hexadecimal format (16 bytes per line)
+        for i in range(0, len(buffer), 16):
+            # Calculate line start address for reference
+            line_addr = address + i
+            # Extract 16-byte chunk (or remaining bytes if less than 16)
+            chunk = buffer[i:i+16]
+            # Format hex bytes with spaces
+            hex_bytes = ' '.join(f'{byte:02X}' for byte in chunk)
+            # Pad hex string to consistent width (47 chars for 16 bytes)
+            hex_string = f"{hex_bytes:<47}"
+            # Convert bytes to ASCII characters (printable chars only, others as '.')
+            ascii_chars = ''.join(chr(b) if 32 <= b <= 126 else '.' for b in chunk)
+            print(f"0x{line_addr:04X}: {hex_string} |{ascii_chars}|")
 
 
     def _perform_reset(self, use_secondary_i2c_address: bool) -> None:
@@ -326,10 +360,6 @@ class GT911:
         :param use_secondary_i2c_address: If True, configure for 0x14 address via INT pin.
                                         If False, configure for 0x5D address.
         :type use_secondary_i2c_address: bool
-
-        Note:
-            The GT911 datasheet specifies precise timing requirements for this sequence.
-            Deviating from these timings may result in communication failures.
         """
         if self._reset is None:
             # No reset pin available - just configure interrupt pin if present
@@ -381,12 +411,6 @@ class GT911:
         :type length: int
         :return: Raw data bytes read from the device registers
         :rtype: bytearray
-        :raises OSError: If I2C communication fails (device not responding, bus error, etc.)
-
-        Example:
-            >>> # Read 4 bytes starting from product ID register
-            >>> data = self._read(0x8140, 4)
-            >>> product_name = ''.join([chr(b) for b in data])
         """
         # Prepare 16-bit register address in big-endian format for GT911
         register_bytes = bytes([register >> 8, register & 0xFF])
@@ -397,6 +421,7 @@ class GT911:
             i2c.write_then_readinto(register_bytes, result_buffer)
 
         return result_buffer
+
 
     def _write_8(self, register: int, data: int) -> None:
         """Write a single byte to a GT911 register.
@@ -411,13 +436,6 @@ class GT911:
         :type register: int
         :param data: Single byte value to write (0-255, will be masked to 8 bits)
         :type data: int
-        :raises OSError: If I2C communication fails (device not responding, bus error, etc.)
-
-        Example:
-            >>> # Clear touch status register
-            >>> self._write_8(0x814E, 0x00)
-            >>> # Send device command
-            >>> self._write_8(0x8040, 0x02)
         """
         # Construct 3-byte I2C write packet: [addr_high, addr_low, data]
         write_buffer = bytearray(3)
@@ -428,6 +446,7 @@ class GT911:
         # Execute I2C write transaction
         with self.i2c_device as i2c:
             i2c.write(bytes(write_buffer))
+
 
     def _write_bytes(self, register: int, data: bytearray) -> None:
         """Write multiple bytes to consecutive GT911 registers.
@@ -445,12 +464,6 @@ class GT911:
         :type register: int
         :param data: Array of bytes to write sequentially to consecutive registers
         :type data: bytearray
-        :raises OSError: If I2C communication fails (device not responding, bus error, etc.)
-
-        Example:
-            >>> # Write 4-byte configuration block
-            >>> config_data = bytearray([0x01, 0x02, 0x03, 0x04])
-            >>> self._write_bytes(0x8047, config_data)
         """
         # Construct I2C write packet: [addr_high, addr_low, data_bytes...]
         write_buffer = bytearray(2 + len(data))

@@ -32,11 +32,6 @@ class Buzzer:
         
         :param pin: GPIO pin connected to the buzzer/speaker
                    Default: board.GP19 (CrowPanel Pico Terminal buzzer pin)
-                   
-        Hardware Notes:
-        - Use with passive buzzers that require frequency generation
-        - Active buzzers may work but won't benefit from frequency control
-        - Ensure adequate current capacity if driving speakers directly
         """
         self.pin = pin              # GPIO pin for buzzer connection
         self.pwm = None            # PWM instance (created lazily)
@@ -55,15 +50,6 @@ class Buzzer:
         :param duration_ms: Playback duration in milliseconds
                            Short durations (1-50ms) for quick feedback
                            Longer durations (100-1000ms) for alerts
-                           
-        Technical Details:
-        - Uses 50% duty cycle for optimal square wave generation
-        - PWM frequency range limited by hardware capabilities
-        - Blocking operation - call returns after tone completes
-        
-        Example Usage:
-        - buzzer.play_tone(1760, 25)  # Quick high-pitched button feedback
-        - buzzer.play_tone(440, 200)  # Longer notification tone
         """
         # Lazy initialization of PWM - only create when first needed
         if self.pwm is None:

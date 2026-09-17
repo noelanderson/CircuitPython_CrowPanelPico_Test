@@ -25,7 +25,8 @@
 
 static const int SCREEN_RESOLUTION_X = 320;
 static const int SCREEN_RESOLUTION_Y = 240;
-static const unsigned long SERIAL_WAIT_TIMEOUT_MS = 15000;
+// Only referenced when CROWPANEL_TOUCH_DEBUG gates the serial-wait in setup().
+[[maybe_unused]] static const unsigned long SERIAL_WAIT_TIMEOUT_MS = 15000;
 static const uint8_t TOUCH_RECOVERY_FAILURE_THRESHOLD = 3;
 static const uint8_t TOUCH_MAX_RECOVERY_ATTEMPTS = 3;
 static const unsigned long TOUCH_RECOVERY_COOLDOWN_MS = 1000;
@@ -148,6 +149,7 @@ void recoverTouchControllerIfNeeded() {
 
 void setup() {
     Serial.begin(115200);
+#if CROWPANEL_TOUCH_DEBUG
     // Leave time to attach a terminal before touch and display diagnostics run.
     unsigned long serialWaitStart = millis();
     while (!Serial &&
@@ -157,6 +159,7 @@ void setup() {
     if (Serial) {
         delay(250);
     }
+#endif
     Serial.println("Starting CrowPanel initialization");
     pinMode(PIN_BACKLIGHT, OUTPUT);
     digitalWrite(PIN_BACKLIGHT, LOW); // GP24 is active-low on this panel.

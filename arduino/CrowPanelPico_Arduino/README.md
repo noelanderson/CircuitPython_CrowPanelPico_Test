@@ -141,5 +141,26 @@ Open `CrowPanelPico_Arduino.ino` in the Arduino IDE (or `arduino-cli compile
 --fqbn rp2040:rp2040:rpipico arduino/CrowPanelPico_Arduino`), select the Pico
 board and a serial port, then upload. Touch and button-press events are
 logged to `Serial` at 115200 baud, matching the `print()` calls in `code.py`.
-Define `CROWPANEL_TOUCH_DEBUG=0` at compile time to omit the high-volume raw
-touch-coordinate log while retaining startup, button, and error diagnostics.
+
+`CROWPANEL_TOUCH_DEBUG` (default `1`) controls the debug/release split:
+
+- `1` (debug, default): `setup()` waits up to 15s for a serial terminal to
+  attach before continuing, and the high-volume raw touch-coordinate log is
+  printed each loop.
+- `0` (release): `setup()` proceeds immediately without waiting on `Serial`,
+  and the raw touch-coordinate log is omitted. Startup, button, and error
+  diagnostics are still printed if a terminal happens to be attached.
+
+Override it with a build property, e.g.:
+
+```powershell
+arduino-cli compile --fqbn rp2040:rp2040:rpipico `
+  --build-property "compiler.cpp.extra_flags=-DCROWPANEL_TOUCH_DEBUG=0" `
+  arduino/CrowPanelPico_Arduino
+```
+
+The CI pipeline ([.github/workflows/arduino-build.yml](../../.github/workflows/arduino-build.yml))
+builds both variants on every run and publishes `CrowPanelPico_Arduino-debug.uf2`
+and `CrowPanelPico_Arduino-release.uf2` as separate artifacts (and release assets
+on `v*` tags).
+

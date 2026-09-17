@@ -22,6 +22,13 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - variant: debug
+            touch_debug: 1
+          - variant: release
+            touch_debug: 0
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -57,10 +64,11 @@ jobs:
       - name: Fail if Images.h is out of date
         run: git diff --exit-code -- "${{ env.SKETCH_DIR }}/Images.h"
 
-      - name: Compile sketch
+      - name: Compile sketch (${{ matrix.variant }})
         run: |
           arduino-cli compile \
             --fqbn "${{ env.FQBN }}" \
+            --build-property "compiler.cpp.extra_flags=-DCROWPANEL_TOUCH_DEBUG=${{ matrix.touch_debug }}" \
             --output-dir build \
             --warnings all \
             "${{ env.SKETCH_DIR }}"
@@ -74,17 +82,28 @@ jobs:
             exit 1
           fi
           echo "Found UF2: $UF2_FILE"
-          cp "$UF2_FILE" build/CrowPanelPico_Arduino.uf2
+          cp "$UF2_FILE" "build/CrowPanelPico_Arduino-${{ matrix.variant }}.uf2"
 
       - name: Upload UF2 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CrowPanelPico_Arduino-uf2
-          path: build/CrowPanelPico_Arduino.uf2
+          name: CrowPanelPico_Arduino-${{ matrix.variant }}-uf2
+          path: build/CrowPanelPico_Arduino-${{ matrix.variant }}.uf2
           if-no-files-found: error
 
-      - name: Attach UF2 to release
-        if: startsWith(github.ref, 'refs/tags/v')
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download UF2 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: CrowPanelPico_Arduino-*-uf2
+          path: build
+          merge-multiple: true
+
+      - name: Attach UF2s to release
         uses: softprops/action-gh-release@v2
         with:
-          files: build/CrowPanelPico_Arduino.uf2
+          files: build/*.uf2

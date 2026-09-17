@@ -45,7 +45,7 @@ jobs:
           key: arduino-${{ env.FQBN }}-${{ hashFiles('.github/workflows/arduino-build.yml') }}
 
       - name: Configure board manager URL
-        run: arduino-cli config init --additional-urls "${{ env.RP2040_INDEX_URL }}"
+        run: arduino-cli config init --overwrite --additional-urls "${{ env.RP2040_INDEX_URL }}"
 
       - name: Update core index
         run: arduino-cli core update-index

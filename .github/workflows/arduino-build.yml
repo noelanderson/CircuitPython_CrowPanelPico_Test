@@ -31,13 +31,13 @@ jobs:
             touch_debug: 0
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install arduino-cli
-        uses: arduino/setup-arduino-cli@v1
+        uses: arduino/setup-arduino-cli@v2
 
       - name: Cache Arduino core and libraries
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.arduino15
@@ -85,7 +85,7 @@ jobs:
           cp "$UF2_FILE" "build/CrowPanelPico_Arduino-${{ matrix.variant }}.uf2"
 
       - name: Upload UF2 artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: CrowPanelPico_Arduino-${{ matrix.variant }}-uf2
           path: build/CrowPanelPico_Arduino-${{ matrix.variant }}.uf2
@@ -99,7 +99,7 @@ jobs:
       contents: write
     steps:
       - name: Download UF2 artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: CrowPanelPico_Arduino-*-uf2
           path: build
